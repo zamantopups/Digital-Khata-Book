@@ -1,0 +1,439 @@
+import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { Plus, Trash2, TrendingUp, TrendingDown, Wallet, Search, Calendar, FileText, MessageSquare, Save, Download, Upload, AlertCircle, CheckCircle } from 'lucide-react';
+
+export default function KhataBookApp() {
+  // --- State Management ---
+  const [transactions, setTransactions] = useState(() => {
+    try {
+      const savedData = localStorage.getItem('khata_transactions');
+      return savedData ? JSON.parse(savedData) : [];
+    } catch (e) {
+      console.error("Failed to load data", e);
+      return [];
+    }
+  });
+
+  const [isFormOpen, setIsFormOpen] = useState(false);
+  
+  // Custom Modal & Toast States (No more window.alert/confirm)
+  const [confirmModal, setConfirmModal] = useState({ show: false, message: '', action: null });
+  const [toast, setToast] = useState({ show: false, message: '', type: 'success' }); // type: success | error
+
+  // Form States
+  const [type, setType] = useState('expense');
+  const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
+  const [amount, setAmount] = useState('');
+  const [detail, setDetail] = useState('');
+  const [remarks, setRemarks] = useState('');
+  
+  // File Input Ref for Restore
+  const fileInputRef = useRef(null);
+
+  // --- Effects ---
+  useEffect(() => {
+    localStorage.setItem('khata_transactions', JSON.stringify(transactions));
+  }, [transactions]);
+
+  // Auto-hide toast after 3 seconds
+  useEffect(() => {
+    if (toast.show) {
+      const timer = setTimeout(() => setToast(prev => ({ ...prev, show: false })), 3000);
+      return () => clearTimeout(timer);
+    }
+  }, [toast.show]);
+
+  // --- Calculations ---
+  const summary = useMemo(() => {
+    let income = 0;
+    let expense = 0;
+    transactions.forEach(t => {
+      const amt = parseFloat(t.amount) || 0;
+      if (t.type === 'income') income += amt;
+      else expense += amt;
+    });
+    return {
+      income,
+      expense,
+      balance: income - expense
+    };
+  }, [transactions]);
+
+  // --- Handlers ---
+  const showToast = (message, type = 'success') => {
+    setToast({ show: true, message, type });
+  };
+
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    if (!amount || !detail) return;
+
+    const newTransaction = {
+      id: Date.now().toString(),
+      date,
+      type,
+      amount: parseFloat(amount),
+      detail,
+      remarks,
+      createdAt: new Date().toISOString()
+    };
+
+    setTransactions(prev => {
+      const newList = [newTransaction, ...prev];
+      return newList.sort((a, b) => new Date(b.date) - new Date(a.date));
+    });
+    
+    setAmount('');
+    setDetail('');
+    setRemarks('');
+    setIsFormOpen(false);
+    showToast('Entry Saved Successfully!');
+  };
+
+  // --- Backup & Restore Logic ---
+  const handleBackup = () => {
+    try {
+      const dataStr = JSON.stringify(transactions, null, 2);
+      const blob = new Blob([dataStr], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      const fileName = `Khata_Backup_${new Date().toISOString().split('T')[0]}.json`;
+      link.download = fileName;
+      link.href = url;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      showToast('Backup file downloaded!');
+    } catch (error) {
+      showToast('Backup failed!', 'error');
+    }
+  };
+
+  const triggerRestore = () => {
+    fileInputRef.current.click();
+  };
+
+  const handleFileChange = (event) => {
+    const file = event.target.files[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const importedData = JSON.parse(e.target.result);
+        if (Array.isArray(importedData)) {
+          // Ask for confirmation before overwriting
+          setConfirmModal({
+            show: true,
+            message: `Found ${importedData.length} records in backup. This will REPLACE your current data. Are you sure?`,
+            action: () => {
+              setTransactions(importedData);
+              showToast('Data Restored Successfully!');
+              setConfirmModal({ show: false, message: '', action: null });
+            }
+          });
+        } else {
+          showToast('Invalid backup file format', 'error');
+        }
+      } catch (error) {
+        showToast('Error reading file', 'error');
+      }
+    };
+    reader.readAsText(file);
+    event.target.value = ''; // Reset input
+  };
+
+  // Delete Logic
+  const requestDelete = (id) => {
+    setConfirmModal({
+      show: true,
+      message: 'Are you sure you want to delete this entry?',
+      action: () => {
+        setTransactions(prev => prev.filter(t => t.id !== id));
+        showToast('Entry deleted');
+        setConfirmModal({ show: false, message: '', action: null });
+      }
+    });
+  };
+
+  const formatCurrency = (num) => {
+    return 'Rs. ' + new Intl.NumberFormat('en-PK', { 
+      minimumFractionDigits: 0, 
+      maximumFractionDigits: 0 
+    }).format(num);
+  };
+
+  return (
+    <div className="min-h-screen bg-slate-50 text-slate-800 font-sans pb-20">
+      {/* Header */}
+      <header className="bg-emerald-700 text-white p-4 shadow-lg sticky top-0 z-10">
+        <div className="max-w-4xl mx-auto flex justify-between items-center">
+          <h1 className="text-xl font-bold flex items-center gap-2">
+            <FileText className="h-6 w-6" />
+            Digital Khata
+          </h1>
+          <div className="flex gap-2">
+            <button 
+              onClick={handleBackup}
+              title="Backup Data"
+              className="p-2 bg-emerald-800 hover:bg-emerald-600 rounded-lg transition-colors"
+            >
+              <Download size={20} />
+            </button>
+            <button 
+              onClick={triggerRestore}
+              title="Restore Data"
+              className="p-2 bg-emerald-800 hover:bg-emerald-600 rounded-lg transition-colors"
+            >
+              <Upload size={20} />
+            </button>
+            <input 
+              type="file" 
+              ref={fileInputRef} 
+              onChange={handleFileChange} 
+              accept=".json" 
+              className="hidden" 
+            />
+            <button 
+              onClick={() => setIsFormOpen(true)}
+              className="bg-white text-emerald-700 px-3 py-2 rounded-lg font-bold text-sm shadow hover:bg-emerald-50 active:scale-95 transition-all flex items-center gap-1"
+            >
+              <Plus size={18} /> <span className="hidden sm:inline">New</span>
+            </button>
+          </div>
+        </div>
+      </header>
+
+      <main className="max-w-4xl mx-auto p-4 space-y-6">
+        
+        {/* Summary Cards */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="bg-white p-6 rounded-xl shadow-sm border-l-4 border-emerald-500 flex flex-col transition-transform hover:scale-[1.02]">
+            <span className="text-gray-500 text-sm font-medium flex items-center gap-1">
+              <TrendingUp size={16} /> Total Income
+            </span>
+            <span className="text-2xl font-bold text-emerald-600 mt-2">
+              {formatCurrency(summary.income)}
+            </span>
+          </div>
+
+          <div className="bg-white p-6 rounded-xl shadow-sm border-l-4 border-rose-500 flex flex-col transition-transform hover:scale-[1.02]">
+            <span className="text-gray-500 text-sm font-medium flex items-center gap-1">
+              <TrendingDown size={16} /> Total Expense
+            </span>
+            <span className="text-2xl font-bold text-rose-600 mt-2">
+              {formatCurrency(summary.expense)}
+            </span>
+          </div>
+
+          <div className="bg-white p-6 rounded-xl shadow-sm border-l-4 border-blue-500 flex flex-col transition-transform hover:scale-[1.02]">
+            <span className="text-gray-500 text-sm font-medium flex items-center gap-1">
+              <Wallet size={16} /> Current Balance
+            </span>
+            <span className={`text-2xl font-bold mt-2 ${summary.balance >= 0 ? 'text-blue-600' : 'text-rose-600'}`}>
+              {formatCurrency(summary.balance)}
+            </span>
+          </div>
+        </div>
+
+        {/* Transaction Table */}
+        <div className="bg-white rounded-xl shadow-sm overflow-hidden border border-gray-200">
+          <div className="p-4 border-b border-gray-100 bg-gray-50 flex justify-between items-center">
+            <h2 className="font-bold text-gray-700 flex items-center gap-2">History</h2>
+            <span className="text-xs font-medium text-gray-500 bg-white px-2 py-1 rounded border">
+              {transactions.length} Records
+            </span>
+          </div>
+          
+          {transactions.length === 0 ? (
+            <div className="p-12 text-center text-gray-400 flex flex-col items-center gap-3">
+              <div className="bg-gray-50 p-4 rounded-full">
+                <FileText size={32} className="opacity-20" />
+              </div>
+              <p>No transactions yet.<br/><span className="text-sm">Click "New" to start.</span></p>
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-sm">
+                <thead>
+                  <tr className="bg-gray-50 text-gray-600 border-b border-gray-100">
+                    <th className="p-4 font-semibold whitespace-nowrap w-32">Date</th>
+                    <th className="p-4 font-semibold">Detail</th>
+                    <th className="p-4 font-semibold text-right">Amount</th>
+                    <th className="p-4 font-semibold text-center w-16">Act</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-50">
+                  {transactions.map((t) => (
+                    <tr key={t.id} className="hover:bg-gray-50 group transition-colors duration-150">
+                      <td className="p-4 text-gray-500 whitespace-nowrap font-mono text-xs">{t.date}</td>
+                      <td className="p-4">
+                        <div className="font-medium text-gray-800">{t.detail}</div>
+                        <div className="flex items-center gap-2 mt-1">
+                          <span className={`text-[10px] px-1.5 py-0.5 rounded border ${t.type === 'income' ? 'bg-emerald-50 text-emerald-700 border-emerald-100' : 'bg-rose-50 text-rose-700 border-rose-100'}`}>
+                            {t.type.toUpperCase()}
+                          </span>
+                          {t.remarks && <span className="text-xs text-gray-400 truncate max-w-[200px]">{t.remarks}</span>}
+                        </div>
+                      </td>
+                      <td className={`p-4 text-right font-bold font-mono whitespace-nowrap ${t.type === 'income' ? 'text-emerald-600' : 'text-rose-600'}`}>
+                        {t.type === 'income' ? '+' : '-'}{formatCurrency(t.amount)}
+                      </td>
+                      <td className="p-4 text-center">
+                        <button 
+                          onClick={() => requestDelete(t.id)}
+                          className="p-2 text-gray-300 hover:text-rose-500 hover:bg-rose-50 rounded-lg transition-all"
+                          title="Delete"
+                        >
+                          <Trash2 size={16} />
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      </main>
+
+      {/* --- MODALS & OVERLAYS --- */}
+
+      {/* Entry Form Modal */}
+      {isFormOpen && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center p-4 z-50 animate-fade-in backdrop-blur-sm">
+          <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl overflow-hidden transform transition-all scale-100">
+            <div className="bg-gray-50 p-4 border-b flex justify-between items-center">
+              <h3 className="font-bold text-gray-700 text-lg">Add Transaction</h3>
+              <button onClick={() => setIsFormOpen(false)} className="text-gray-400 hover:text-gray-600 transition-colors">✕</button>
+            </div>
+            <form onSubmit={handleSubmit} className="p-6 space-y-5">
+              <div className="grid grid-cols-2 gap-2 bg-gray-100 p-1.5 rounded-xl">
+                <button
+                  type="button"
+                  onClick={() => setType('income')}
+                  className={`py-2.5 rounded-lg text-sm font-bold transition-all duration-200 ${type === 'income' ? 'bg-white text-emerald-600 shadow-sm scale-[1.02]' : 'text-gray-500 hover:bg-gray-200'}`}
+                >
+                  Income (+)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setType('expense')}
+                  className={`py-2.5 rounded-lg text-sm font-bold transition-all duration-200 ${type === 'expense' ? 'bg-white text-rose-600 shadow-sm scale-[1.02]' : 'text-gray-500 hover:bg-gray-200'}`}
+                >
+                  Expense (-)
+                </button>
+              </div>
+
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1.5">Date</label>
+                  <div className="relative group">
+                    <Calendar className="absolute left-3 top-2.5 text-gray-400 h-5 w-5 group-focus-within:text-emerald-500 transition-colors" />
+                    <input 
+                      type="date" 
+                      required
+                      value={date} 
+                      onChange={(e) => setDate(e.target.value)}
+                      className="w-full pl-10 pr-3 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none transition-all"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1.5">Description</label>
+                  <div className="relative group">
+                    <FileText className="absolute left-3 top-2.5 text-gray-400 h-5 w-5 group-focus-within:text-emerald-500 transition-colors" />
+                    <input 
+                      type="text" 
+                      required
+                      placeholder="e.g., Sold Item / Grocery"
+                      value={detail} 
+                      onChange={(e) => setDetail(e.target.value)}
+                      className="w-full pl-10 pr-3 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none transition-all"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1.5">Amount (PKR)</label>
+                  <div className="relative group">
+                    <div className="absolute left-3 top-2 text-gray-400 font-bold text-sm h-6 w-6 flex items-center justify-center group-focus-within:text-emerald-500">
+                      Rs
+                    </div>
+                    <input 
+                      type="number" 
+                      required
+                      min="0"
+                      step="any"
+                      placeholder="0"
+                      value={amount} 
+                      onChange={(e) => setAmount(e.target.value)}
+                      className="w-full pl-10 pr-3 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none font-mono text-lg transition-all"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1.5">Remarks</label>
+                  <div className="relative group">
+                    <MessageSquare className="absolute left-3 top-2.5 text-gray-400 h-5 w-5 group-focus-within:text-emerald-500 transition-colors" />
+                    <input 
+                      type="text" 
+                      placeholder="Optional notes..."
+                      value={remarks} 
+                      onChange={(e) => setRemarks(e.target.value)}
+                      className="w-full pl-10 pr-3 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none transition-all"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <button type="submit" className="w-full bg-emerald-600 hover:bg-emerald-700 text-white py-3.5 rounded-lg font-bold shadow-lg hover:shadow-xl active:scale-[0.98] transition-all flex justify-center items-center gap-2">
+                <Save size={18} />
+                Save Entry
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Confirmation Modal */}
+      {confirmModal.show && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center p-4 z-[60] animate-fade-in backdrop-blur-sm">
+          <div className="bg-white rounded-xl shadow-2xl p-6 max-w-sm w-full transform scale-100">
+            <div className="flex flex-col items-center text-center">
+              <div className="h-12 w-12 bg-amber-100 text-amber-600 rounded-full flex items-center justify-center mb-4">
+                <AlertCircle size={24} />
+              </div>
+              <h3 className="text-lg font-bold text-gray-800 mb-2">Confirm Action</h3>
+              <p className="text-gray-600 mb-6 text-sm">{confirmModal.message}</p>
+              <div className="flex gap-3 w-full">
+                <button 
+                  onClick={() => setConfirmModal({ show: false, message: '', action: null })}
+                  className="flex-1 px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg font-medium transition-colors"
+                >
+                  Cancel
+                </button>
+                <button 
+                  onClick={confirmModal.action}
+                  className="flex-1 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-medium transition-colors"
+                >
+                  Confirm
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Toast Notification */}
+      {toast.show && (
+        <div className={`fixed bottom-4 right-4 px-6 py-3 rounded-lg shadow-lg flex items-center gap-3 animate-slide-up z-[70] ${toast.type === 'error' ? 'bg-rose-600 text-white' : 'bg-slate-800 text-white'}`}>
+          {toast.type === 'error' ? <AlertCircle size={20} /> : <CheckCircle size={20} className="text-emerald-400" />}
+          <span className="font-medium text-sm">{toast.message}</span>
+        </div>
+      )}
+
+    </div>
+  );
+}
